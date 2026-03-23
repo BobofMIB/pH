@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>pH Lab Dashboard</title>
+    <style>
+        body { font-family: system-ui; background: #000; color: white; padding: 10px; margin: 0; text-align: center; }
+        .card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 10px; border: 1px solid #333; }
+        .live-ph { font-size: 5em; font-weight: 900; color: #00d1b2; margin: 10px 0; }
+        .cal-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; text-align: left; }
+        .cal-row input { width: 60px; background: #000; color: #fff; border: 1px solid #444; padding: 5px; }
+        .cal-row button { flex-grow: 1; padding: 8px; background: #444; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="card" style="display:flex; justify-content: flex-end;">
+    <button id="bleBtn" style="background:#00d1b2; border:none; padding:10px 20px; border-radius:6px; font-weight:bold; cursor:pointer;" onclick="connectBLE()">CONNECT DEVICE</button>
+</div>
+
+<div class="card">
+    <div id="phUI">
+        <div class="live-ph" id="phDisplay">--.-</div>
+        <div style="color:#00d1b2; font-weight:bold; letter-spacing: 2px; margin-bottom:20px;">pH UNITS</div>
+
+        <div class="card" style="text-align:left; background:#111; border: 1px solid #444;">
+            <h4 style="margin:0 0 10px 0; color:#ffdd57; font-size: 0.9em;">LIVE CALIBRATION</h4>
+            <div class="cal-row">
+                <input type="number" id="cal1Ph" value="7.0">
+                <button onclick="captureCal(1)">Sample Buffer 1</button>
+                <span id="raw1" style="color:#00d1b2; font-weight:bold; min-width:40px;">---</span>
+            </div>
+            <div class="cal-row">
+                <input type="number" id="cal2Ph" value="4.0">
+                <button onclick="captureCal(2)">Sample Buffer 2</button>
+                <span id="raw2" style="color:#00d1b2; font-weight:bold; min-width:40px;">---</span>
+            </div>
+            <button onclick="calculateCalibration()" style="width:100%; padding:10px; background:#00d1b2; color:black; font-weight:bold; border:none; border-radius:4px; margin-top:5px; cursor: pointer;">APPLY CALIBRATION</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let commandChar;
+    let calPoints = { 1: { ph: 7.0, raw: null }, 2: { ph: 4.0, raw: null } };
+
+    async function connectBLE() {
+        if (!navigator.bluetooth) return alert("Web Bluetooth not supported here.");
+        try {
+            const device = await navigator.bluetooth.requestDevice({ 
+                filters: [{ name: 'NanoPhys_S3' }], 
+                optionalServices: ["19b10000-e8f2-537e-4f6c-d104768a1214"] 
+            });
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService("19b10000-e8f2-537e-4f6c-d104768a1214");
+            const dataC = await service.getCharacteristic("19b10001-e8f2-537e-4f6c-d104768a1214");
+            commandChar = await service.getCharacteristic("19b10002-e8f2-537e-4f6c-d104768a1214");
+            document.getElementById('bleBtn').innerText = "CONNECTED";
+            
+            // Force pH Mode on connection
+            await commandChar.writeValue(new TextEncoder().encode("MODE:PH"));
+            
+            await dataC.startNotifications();
+            dataC.addEventListener('characteristicvaluechanged', (e) => {
+                const str = new TextDecoder().decode(e.target.value);
+                if (str.startsWith("PH:")) {
+                    document.getElementById('phDisplay').innerText = str.substring(3);
+                } else if (str.startsWith("RAW:")) {
+                    let val = str.substring(4);
+                    calPoints[window.lastCalNum].raw = parseFloat(val);
+                    document.getElementById('raw' + window.lastCalNum).innerText = val;
+                }
+            });
+        } catch (err) { console.log(err); }
+    }
+
+    async function captureCal(n) { 
+        window.lastCalNum = n; 
+        calPoints[n].ph = parseFloat(document.getElementById('cal'+n+'Ph').value);
+        if(commandChar) await commandChar.writeValue(new TextEncoder().encode("GET_RAW")); 
+    }
+    
+    async function calculateCalibration() {
+        let p1 = calPoints[1], p2 = calPoints[2];
+        if (!p1.raw || !p2.raw) return alert("Need 2 samples to calibrate!");
+        let v1 = p1.raw * (3.3/4095), v2 = p2.raw * (3.3/4095);
+        let slope = Math.abs((p1.ph - p2.ph) / (v1 - v2));
+        let offset = p1.raw + ((p1.ph - 7.0) / ((3.3/4095) * slope));
+        await commandChar.writeValue(new TextEncoder().encode("OFF:" + offset.toFixed(1)));
+        await commandChar.writeValue(new TextEncoder().encode("SLP:" + slope.toFixed(2)));
+        alert("Calibrated! Sent to device.");
+    }
+</script>
+</body>
+</html>
