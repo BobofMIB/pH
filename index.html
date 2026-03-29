@@ -8,31 +8,22 @@
         :root { --bg: #0d1117; --card: #161b22; --accent: #00d1b2; --text: #c9d1d9; --ph7: #4cd137; --ph4: #e84118; --danger: #f85149; }
         body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 20px; display: flex; flex-direction: column; align-items: center; }
         .container { width: 100%; max-width: 500px; }
-        
-        .card { background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        .card { background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 15px; }
         .hidden { display: none !important; }
-
         .view-controls { display: flex; justify-content: space-around; background: #000; padding: 12px; border-radius: 8px; border: 1px solid #333; margin-bottom: 15px; }
         .view-controls label { font-size: 0.8em; color: #8b949e; cursor: pointer; display: flex; align-items: center; gap: 8px; }
         input[type="checkbox"] { accent-color: var(--accent); scale: 1.2; }
-
         .ph-display { font-size: 6em; text-align: center; font-weight: 800; margin: 10px 0; color: #ffdd57; font-family: monospace; line-height: 1; }
-        
         .diag-box { background: #000; padding: 10px; border-radius: 8px; border: 1px solid #444; text-align: center; margin-bottom: 15px; }
         .raw-num { color: var(--accent); font-weight: bold; font-family: monospace; font-size: 1.3em; }
-
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .btn { width: 100%; padding: 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
         .btn-ble { background: var(--accent); color: #000; margin-bottom: 15px; font-size: 1em; }
-        
         .btn-sub { background: #21262d; color: #fff; border: 1px solid #444; }
         .btn-sub.ph7 { border-bottom: 4px solid var(--ph7); }
         .btn-sub.ph4 { border-bottom: 4px solid var(--ph4); }
-        
-        .btn-reset { background: transparent; color: var(--danger); border: 1px solid var(--danger); margin-top: 10px; padding: 10px; font-size: 0.75em; }
-        .btn-reset:hover { background: var(--danger); color: white; }
-
-        .btn-success { background: #2ea44f !important; border-color: #fff !important; color: white !important; }
+        .btn-reset { background: transparent; color: var(--danger); border: 1px solid var(--danger); margin-top: 10px; padding: 10px; font-size: 0.75em; width: 100%; }
+        .btn-success { background: #2ea44f !important; color: white !important; }
         .label { font-size: 0.7em; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
     </style>
 </head>
@@ -61,20 +52,19 @@
             <button id="btn7" class="btn btn-sub ph7" onclick="doSubmit('CAL:7', 'btn7')">SUBMIT pH 7</button>
             <button id="btn4" class="btn btn-sub ph4" onclick="doSubmit('CAL:4', 'btn4')">SUBMIT pH 4</button>
         </div>
-        <button class="btn btn-reset" onclick="doSubmit('CAL:RESET', this.id)">RESET CALIBRATION TO DEFAULT</button>
+        <button id="resetCal" class="btn btn-reset" onclick="doSubmit('CAL:RESET', 'resetCal')">RESET CALIBRATION</button>
     </div>
 
     <div id="graphSection" class="card hidden">
         <div class="label">pH Trend</div>
         <canvas id="phChart" style="margin-top:10px;"></canvas>
-        <button class="btn btn-reset" onclick="resetGraph()">CLEAR GRAPH & RESTART TIME</button>
+        <button class="btn btn-reset" onclick="resetGraph()">CLEAR GRAPH</button>
     </div>
 </div>
 
 <script>
-    let pDataChar, pCmdChar, phChart;
+    let pDataChar, pCmdChar, phChart, startTime = null;
     let phHistory = [];
-    let startTime = null;
 
     function updateVisibility() {
         document.getElementById('calSection').classList.toggle('hidden', !document.getElementById('toggleCal').checked);
@@ -95,15 +85,20 @@
 
             await pDataChar.startNotifications();
             pDataChar.addEventListener('characteristicvaluechanged', (e) => {
-                const rawString = new TextDecoder().decode(e.target.value);
-                const parts = rawString.trim().split(':');
-                if (parts.length < 2) return;
-                if (parts[0] === "PH") {
-                    const val = parseFloat(parts[1]);
-                    document.getElementById('phVal').innerText = val.toFixed(2);
-                    updateGraph(val);
-                } else if (parts[0] === "RAW") {
-                    document.getElementById('rawDisplay').innerText = parts[1];
+                // REPAIRED DATA PARSING
+                let decoder = new TextDecoder();
+                let str = decoder.decode(e.target.value).replace(/\s+/g, ''); // Remove all spaces/newlines
+                
+                if (str.includes("PH:")) {
+                    let val = parseFloat(str.split("PH:")[1]);
+                    if (!isNaN(val)) {
+                        document.getElementById('phVal').innerText = val.toFixed(2);
+                        updateGraph(val);
+                    }
+                } 
+                if (str.includes("RAW:")) {
+                    let raw = str.split("RAW:")[1];
+                    document.getElementById('rawDisplay').innerText = raw;
                 }
             });
 
@@ -119,11 +114,9 @@
         const btn = document.getElementById(btnId);
         try {
             await pCmdChar.writeValue(new TextEncoder().encode(cmd));
-            if (btn) {
-                const oldText = btn.innerText;
-                btn.innerText = "DONE ✓";
-                setTimeout(() => { btn.innerText = oldText; }, 1500);
-            }
+            const oldText = btn.innerText;
+            btn.innerText = "SENT ✓";
+            setTimeout(() => { btn.innerText = oldText; }, 1200);
         } catch (e) { console.log(e); }
     }
 
@@ -146,7 +139,8 @@
                     x: { type: 'linear', title: { display: true, text: 'Seconds' }, grid: { color: '#333' } },
                     y: { min: 0, max: 14, title: { display: true, text: 'pH' }, grid: { color: '#333' } }
                 },
-                plugins: { legend: { display: false } }
+                plugins: { legend: { display: false } },
+                animation: false
             }
         });
     }
