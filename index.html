@@ -1,29 +1,181 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AQA pH Pro Master</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --bg: #0d1117; --card: #161b22; --accent: #00d1b2; --text: #c9d1d9; --ph7: #4cd137; --ph4: #e84118; --danger: #f85149; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { width: 100%; max-width: 500px; }
+        
+        /* Layout */
+        .card { background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        .hidden { display: none !important; }
+
+        /* Controls */
+        .view-controls { display: flex; justify-content: space-around; background: #000; padding: 12px; border-radius: 8px; border: 1px solid #333; margin-bottom: 15px; }
+        .view-controls label { font-size: 0.8em; color: #8b949e; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+        input[type="checkbox"] { accent-color: var(--accent); scale: 1.2; }
+
+        /* Big Readout */
+        .ph-display { font-size: 6em; text-align: center; font-weight: 800; margin: 10px 0; color: #ffdd57; font-family: monospace; line-height: 1; text-shadow: 0 0 15px rgba(255, 221, 87, 0.2); }
+        
+        /* Buttons & Diags */
+        .diag-box { background: #000; padding: 10px; border-radius: 8px; border: 1px solid #444; text-align: center; margin-bottom: 15px; }
+        .raw-num { color: var(--accent); font-weight: bold; font-family: monospace; font-size: 1.3em; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .btn { width: 100%; padding: 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-ble { background: var(--accent); color: #000; margin-bottom: 15px; font-size: 1em; }
+        
+        .btn-sub { background: #21262d; color: #fff; border: 1px solid #444; }
+        .btn-sub.ph7 { border-bottom: 4px solid var(--ph7); }
+        .btn-sub.ph4 { border-bottom: 4px solid var(--ph4); }
+        
+        .btn-reset { background: transparent; color: var(--danger); border: 1px solid var(--danger); margin-top: 10px; padding: 10px; font-size: 0.75em; width: 100%; border-radius: 8px; }
+        .btn-reset:hover { background: var(--danger); color: white; }
+
+        .btn-success { background: #2ea44f !important; border-color: #fff !important; color: white !important; }
+        .label { font-size: 0.7em; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+    </style>
+</head>
 <body>
-    <button onclick="connect()">1. CONNECT</button>
-    <div style="font-size: 2em;">
-        RAW DATA FROM BOARD: <span id="debug">WAITING...</span>
+
+<div class="container">
+    <button id="bleBtn" class="btn btn-ble" onclick="connectBLE()">CONNECT TO NANO S3</button>
+
+    <div class="view-controls">
+        <label><input type="checkbox" id="toggleCal" onchange="updateVisibility()"> CALIBRATION</label>
+        <label><input type="checkbox" id="toggleGraph" onchange="updateVisibility()"> GRAPH</label>
     </div>
 
-    <script>
-    async function connect() {
-        const device = await navigator.bluetooth.requestDevice({
-            filters: [{ name: 'NanoPhys_S3' }],
-            optionalServices: ["19b10000-e8f2-537e-4f6c-d104768a1214"]
-        });
-        const server = await device.gatt.connect();
-        const service = await server.getPrimaryService("19b10000-e8f2-537e-4f6c-d104768a1214");
-        const char = await service.getCharacteristic("19b10001-e8f2-537e-4f6c-d104768a1214");
-        
-        await char.startNotifications();
-        char.addEventListener('characteristicvaluechanged', (e) => {
-            let str = new TextDecoder().decode(e.target.value);
-            document.getElementById('debug').innerText = str;
-            console.log("Received:", str);
-        });
-        alert("Connected! Watch the screen.");
+    <div class="card">
+        <div class="label" style="text-align: center;">Live pH Readout</div>
+        <div id="phVal" class="ph-display">--.-</div>
+    </div>
+
+    <div id="calSection" class="card hidden">
+        <div class="label">Calibration Diagnostics</div>
+        <div class="diag-box">
+            <span style="color: #8b949e; font-size: 0.8em;">LIVE RAW ADC: </span>
+            <span id="rawDisplay" class="raw-num">----</span>
+        </div>
+        <div class="grid">
+            <button id="btn7" class="btn btn-sub ph7" onclick="doSubmit('CAL:7', 'btn7')">SUBMIT pH 7</button>
+            <button id="btn4" class="btn btn-sub ph4" onclick="doSubmit('CAL:4', 'btn4')">SUBMIT pH 4</button>
+        </div>
+        <button id="resetCal" class="btn btn-reset" onclick="doSubmit('CAL:RESET', 'resetCal')">RESET BOARD CALIBRATION</button>
+    </div>
+
+    <div id="graphSection" class="card hidden">
+        <div class="label">pH Data Logging</div>
+        <canvas id="phChart" style="margin-top:10px;"></canvas>
+        <button class="btn btn-reset" onclick="resetGraph()">CLEAR GRAPH DATA</button>
+    </div>
+</div>
+
+<script>
+    let pDataChar, pCmdChar, phChart;
+    let phHistory = [];
+    let startTime = null;
+
+    function updateVisibility() {
+        document.getElementById('calSection').classList.toggle('hidden', !document.getElementById('toggleCal').checked);
+        document.getElementById('graphSection').classList.toggle('hidden', !document.getElementById('toggleGraph').checked);
+        if (phChart) phChart.resize();
     }
-    </script>
+
+    async function connectBLE() {
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ name: 'NanoPhys_S3' }],
+                optionalServices: ["19b10000-e8f2-537e-4f6c-d104768a1214"]
+            });
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService("19b10000-e8f2-537e-4f6c-d104768a1214");
+            pDataChar = await service.getCharacteristic("19b10001-e8f2-537e-4f6c-d104768a1214");
+            pCmdChar = await service.getCharacteristic("19b10002-e8f2-537e-4f6c-d104768a1214");
+
+            // MANDATORY: Force the board into pH mode on connect
+            await pCmdChar.writeValue(new TextEncoder().encode("MODE:PH"));
+
+            await pDataChar.startNotifications();
+            pDataChar.addEventListener('characteristicvaluechanged', (e) => {
+                let decoder = new TextDecoder();
+                let str = decoder.decode(e.target.value).trim().replace(/\s/g, '');
+                
+                // Enhanced Parsing Logic
+                if (str.includes("PH:")) {
+                    let val = parseFloat(str.split("PH:")[1]);
+                    if (!isNaN(val)) {
+                        document.getElementById('phVal').innerText = val.toFixed(2);
+                        updateGraph(val);
+                    }
+                } else if (str.includes("RAW:")) {
+                    let raw = str.split("RAW:")[1];
+                    document.getElementById('rawDisplay').innerText = raw;
+                }
+            });
+
+            document.getElementById('bleBtn').innerText = "CONNECTED";
+            document.getElementById('bleBtn').classList.add('btn-success');
+            
+            initGraph();
+            startTime = Date.now();
+        } catch (err) { 
+            console.log(err);
+            alert("Bluetooth connection failed. Refresh and try again.");
+        }
+    }
+
+    async function doSubmit(cmd, btnId) {
+        if (!pCmdChar) return;
+        const btn = document.getElementById(btnId);
+        try {
+            await pCmdChar.writeValue(new TextEncoder().encode(cmd));
+            const oldText = btn.innerText;
+            btn.innerText = "SUCCESS ✓";
+            setTimeout(() => { btn.innerText = oldText; }, 1500);
+        } catch (e) { 
+            console.log(e);
+            btn.innerText = "FAILED";
+        }
+    }
+
+    function resetGraph() {
+        phHistory = [];
+        startTime = Date.now();
+        if (phChart) {
+            phChart.data.datasets[0].data = phHistory;
+            phChart.update();
+        }
+    }
+
+    function initGraph() {
+        const ctx = document.getElementById('phChart').getContext('2d');
+        phChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets: [{ label: 'pH', data: phHistory, borderColor: '#ffdd57', tension: 0.3, pointRadius: 2, borderWidth: 2 }]},
+            options: {
+                responsive: true,
+                scales: {
+                    x: { type: 'linear', title: { display: true, text: 'Seconds', color: '#8b949e' }, grid: { color: '#333' }, ticks: { color: '#8b949e' } },
+                    y: { min: 0, max: 14, title: { display: true, text: 'pH Level', color: '#8b949e' }, grid: { color: '#333' }, ticks: { color: '#8b949e' } }
+                },
+                plugins: { legend: { display: false } },
+                animation: false
+            }
+        });
+    }
+
+    function updateGraph(val) {
+        if (!phChart || startTime === null) return;
+        const elapsed = (Date.now() - startTime) / 1000;
+        phHistory.push({ x: elapsed, y: val });
+        if (phHistory.length > 150) phHistory.shift();
+        phChart.update('none');
+    }
+</script>
 </body>
 </html>
