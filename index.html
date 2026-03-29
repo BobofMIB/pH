@@ -2,6 +2,186 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <title>AQA pH Pro: Live Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --bg: #0d1117; --card: #161b22; --accent: #00d1b2; --text: #c9d1d9; --ph7: #4cd137; --ph4: #e84118; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { width: 100%; max-width: 500px; }
+        .card { background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        
+        /* Checkbox Toggles */
+        .controls { display: flex; justify-content: space-around; background: #000; padding: 10px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 15px; font-size: 0.85em; }
+        .controls label { cursor: pointer; display: flex; align-items: center; gap: 5px; color: #8b949e; }
+        .controls input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+
+        .ph-display { font-size: 5.5em; text-align: center; font-weight: 800; margin: 10px 0; color: #ffdd57; font-family: 'Courier New', monospace; }
+        
+        .diagnostic-bar { background: #000; padding: 10px; border-radius: 8px; border: 1px solid #444; text-align: center; margin-bottom: 15px; }
+        .raw-val { color: var(--accent); font-weight: bold; font-family: monospace; font-size: 1.2em; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .btn { width: 100%; padding: 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: all 0.2s ease; font-size: 0.85em; }
+        .btn-ble { background: var(--accent); color: #000; margin-bottom: 15px; font-size: 1em; }
+        
+        /* Submit Buttons */
+        .btn-submit { background: #21262d; color: #fff; border: 1px solid #444; }
+        .btn-submit:hover { border-color: var(--accent); }
+        .btn-submit.active-7 { border-left: 4px solid var(--ph7); }
+        .btn-submit.active-4 { border-left: 4px solid var(--ph4); }
+        .btn-submit.success { background: #2ea44f !important; color: white !important; border-color: #2ea44f !important; }
+        
+        .label { font-size: 0.7em; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <button id="bleBtn" class="btn btn-ble" onclick="connectBLE()">CONNECT TO SENSOR</button>
+
+    <div class="controls">
+        <label><input type="checkbox" id="chkCal" checked onchange="toggleViews()"> Show Calibration</label>
+        <label><input type="checkbox" id="chkGraph" checked onchange="toggleViews()"> Show Graph</label>
+    </div>
+
+    <div class="card">
+        <div class="label" style="text-align: center;">Live pH Level</div>
+        <div id="phVal" class="ph-display">--.-</div>
+    </div>
+
+    <div id="calCard" class="card">
+        <div class="label">Calibration Diagnostics</div>
+        <div class="diagnostic-bar">
+            <span style="font-size: 0.8em; color: #8b949e;">LIVE RAW ADC: </span>
+            <span id="rawDisplay" class="raw-val">----</span>
+        </div>
+
+        <div class="grid">
+            <div>
+                <button id="btn7" class="btn btn-submit active-7" onclick="submitCal('CAL:7', 'btn7')">SUBMIT pH 7</button>
+            </div>
+            <div>
+                <button id="btn4" class="btn btn-submit active-4" onclick="submitCal('CAL:4', 'btn4')">SUBMIT pH 4</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="graphCard" class="card" style="padding: 10px;">
+        <canvas id="phChart" style="max-height: 180px;"></canvas>
+    </div>
+</div>
+
+<script>
+    let pDataChar, pCmdChar, phChart;
+    let phHistory = [];
+
+    // --- UI Toggle Logic ---
+    function toggleViews() {
+        document.getElementById('calCard').style.display = document.getElementById('chkCal').checked ? 'block' : 'none';
+        document.getElementById('graphCard').style.display = document.getElementById('chkGraph').checked ? 'block' : 'none';
+    }
+
+    // --- BLE Connection Logic ---
+    async function connectBLE() {
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ name: 'NanoPhys_S3' }],
+                optionalServices: ["19b10000-e8f2-537e-4f6c-d104768a1214"]
+            });
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService("19b10000-e8f2-537e-4f6c-d104768a1214");
+            pDataChar = await service.getCharacteristic("19b10001-e8f2-537e-4f6c-d104768a1214");
+            pCmdChar = await service.getCharacteristic("19b10002-e8f2-537e-4f6c-d104768a1214");
+
+            // Tell Arduino we are in pH Mode
+            await pCmdChar.writeValue(new TextEncoder().encode("MODE:PH"));
+
+            await pDataChar.startNotifications();
+            pDataChar.addEventListener('characteristicvaluechanged', handleIncomingData);
+            
+            document.getElementById('bleBtn').innerText = "SYSTEM ONLINE";
+            document.getElementById('bleBtn').style.background = "#2ea44f";
+            document.getElementById('bleBtn').style.color = "#fff";
+            
+            if (!phChart) initChart();
+        } catch (e) { 
+            console.error("BLE Error:", e);
+            alert("Connection Failed. Make sure the Nano S3 is powered on.");
+        }
+    }
+
+    // --- Data Handling ---
+    function handleIncomingData(e) {
+        const str = new TextDecoder().decode(e.target.value);
+        
+        if (str.startsWith("PH:")) {
+            const val = parseFloat(str.substring(3));
+            document.getElementById('phVal').innerText = val.toFixed(2);
+            updateChart(val);
+        }
+        else if (str.startsWith("RAW:")) {
+            document.getElementById('rawDisplay').innerText = str.substring(4);
+        }
+    }
+
+    // --- Submit Command Logic ---
+    async function submitCal(cmd, btnId) {
+        if (!pCmdChar) {
+            alert("Please connect to the sensor first.");
+            return;
+        }
+        
+        const btn = document.getElementById(btnId);
+        const originalText = btn.innerText;
+
+        try {
+            await pCmdChar.writeValue(new TextEncoder().encode(cmd));
+            
+            // Success Feedback
+            btn.classList.add('success');
+            btn.innerText = "SUBMITTED ✓";
+            
+            setTimeout(() => {
+                btn.classList.remove('success');
+                btn.innerText = originalText;
+            }, 1500);
+        } catch (e) {
+            console.error("Submit Error:", e);
+            btn.innerText = "FAILED";
+            setTimeout(() => btn.innerText = originalText, 1500);
+        }
+    }
+
+    // --- Graphing Logic ---
+    function initChart() {
+        const ctx = document.getElementById('phChart').getContext('2d');
+        phChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets: [{ label: 'pH', data: phHistory, borderColor: '#ffdd57', tension: 0.4, pointRadius: 0, borderWidth: 2 }]},
+            options: { 
+                scales: { 
+                    x: { type: 'linear', display: false }, 
+                    y: { min: 0, max: 14, grid: { color: '#333' }, ticks: { color: '#8b949e' } } 
+                }, 
+                plugins: { legend: { display: false } },
+                animation: false
+            }
+        });
+    }
+
+    function updateChart(val) {
+        if (!phChart) return;
+        phHistory.push({ x: Date.now(), y: val });
+        // Keep the last 60 readings
+        if (phHistory.length > 60) phHistory.shift();
+        phChart.update();
+    }
+</script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
     <title>AQA pH Pro: Submit Mode</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
