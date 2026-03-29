@@ -1,95 +1,216 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>pH Lab Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AQA pH Pro Master</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: system-ui; background: #000; color: white; padding: 10px; margin: 0; text-align: center; }
-        .card { background: #1e1e1e; padding: 15px; border-radius: 12px; margin-bottom: 10px; border: 1px solid #333; }
-        .live-ph { font-size: 5em; font-weight: 900; color: #00d1b2; margin: 10px 0; }
-        .cal-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; text-align: left; }
-        .cal-row input { width: 60px; background: #000; color: #fff; border: 1px solid #444; padding: 5px; }
-        .cal-row button { flex-grow: 1; padding: 8px; background: #444; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        :root {
+            --bg: #0d1117;
+            --card: #161b22;
+            --accent: #00d1b2;
+            --ph7: #4cd137;
+            --ph4: #e84118;
+            --text: #c9d1d9;
+            --highlight: #ffdd57;
+        }
+
+        body { 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            background: var(--bg); color: var(--text); 
+            margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; 
+        }
+
+        .container { width: 100%; max-width: 500px; }
+
+        .card { 
+            background: var(--card); padding: 20px; border-radius: 12px; 
+            border: 1px solid #30363d; margin-bottom: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        .header { display: flex; justify-content: space-between; align-items: center; }
+        h2 { margin: 0; font-size: 1.1em; color: var(--highlight); letter-spacing: 1px; }
+
+        .ph-display { 
+            font-size: 5em; font-weight: 800; text-align: center; 
+            font-family: 'Courier New', monospace; margin: 10px 0; color: var(--highlight);
+        }
+
+        .status-bar { 
+            display: flex; justify-content: center; align-items: center; 
+            gap: 10px; font-size: 0.8em; margin-bottom: 10px;
+        }
+
+        .indicator { width: 12px; height: 12px; border-radius: 50%; background: #333; }
+        .stable { background: #00ff00; box-shadow: 0 0 10px #00ff00; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+        button { 
+            padding: 12px; border-radius: 8px; border: none; font-weight: bold; 
+            cursor: pointer; transition: 0.2s; font-size: 0.9em;
+        }
+
+        .btn-ble { background: var(--accent); color: #000; width: 100%; }
+        .btn-cal7 { background: transparent; border: 2px solid var(--ph7); color: var(--ph7); }
+        .btn-cal4 { background: transparent; border: 2px solid var(--ph4); color: var(--ph4); }
+        .btn-cal:active { background: #ffffff22; }
+        
+        .btn-log { background: #21262d; color: #fff; border: 1px solid #30363d; grid-column: span 2; }
+        .btn-log.active { background: var(--danger); color: white; border-color: #ff3860; }
+
+        canvas { background: #0d1117; border-radius: 8px; margin-top: 15px; padding: 10px; box-sizing: border-box; }
+        
+        .label { font-size: 0.65em; color: #8b949e; text-transform: uppercase; margin-bottom: 4px; }
     </style>
 </head>
 <body>
 
-<div class="card" style="display:flex; justify-content: flex-end;">
-    <button id="bleBtn" style="background:#00d1b2; border:none; padding:10px 20px; border-radius:6px; font-weight:bold; cursor:pointer;" onclick="connectBLE()">CONNECT DEVICE</button>
-</div>
+<div class="container">
+    
+    <div class="card header">
+        <h2>pH PRO MASTER</h2>
+        <button id="bleBtn" onclick="connectBLE()" style="width: auto; padding: 8px 15px;">CONNECT</button>
+    </div>
 
-<div class="card">
-    <div id="phUI">
-        <div class="live-ph" id="phDisplay">--.-</div>
-        <div style="color:#00d1b2; font-weight:bold; letter-spacing: 2px; margin-bottom:20px;">pH UNITS</div>
+    <div class="card">
+        <div class="status-bar">
+            <div id="stabInd" class="indicator"></div>
+            <span id="stabText">SENSING...</span>
+        </div>
+        <div id="phVal" class="ph-display">7.00</div>
+        <div class="label" style="text-align: center;">Potential Hydrogen</div>
+    </div>
 
-        <div class="card" style="text-align:left; background:#111; border: 1px solid #444;">
-            <h4 style="margin:0 0 10px 0; color:#ffdd57; font-size: 0.9em;">LIVE CALIBRATION</h4>
-            <div class="cal-row">
-                <input type="number" id="cal1Ph" value="7.0">
-                <button onclick="captureCal(1)">Sample Buffer 1</button>
-                <span id="raw1" style="color:#00d1b2; font-weight:bold; min-width:40px;">---</span>
-            </div>
-            <div class="cal-row">
-                <input type="number" id="cal2Ph" value="4.0">
-                <button onclick="captureCal(2)">Sample Buffer 2</button>
-                <span id="raw2" style="color:#00d1b2; font-weight:bold; min-width:40px;">---</span>
-            </div>
-            <button onclick="calculateCalibration()" style="width:100%; padding:10px; background:#00d1b2; color:black; font-weight:bold; border:none; border-radius:4px; margin-top:5px; cursor: pointer;">APPLY CALIBRATION</button>
+    <div class="card">
+        <div class="label">Two-Point Calibration</div>
+        <div class="grid">
+            <button class="btn-cal7" onclick="sendCmd('CAL:7')">SAMPLE pH 7.0</button>
+            <button class="btn-cal4" onclick="sendCmd('CAL:4')">SAMPLE pH 4.0</button>
+            <button id="logBtn" class="btn-log" onclick="toggleLogging()">START LIVE GRAPH</button>
         </div>
     </div>
+
+    <div class="card">
+        <canvas id="phChart"></canvas>
+    </div>
+
 </div>
 
 <script>
-    let commandChar;
-    let calPoints = { 1: { ph: 7.0, raw: null }, 2: { ph: 4.0, raw: null } };
+    let pDataChar, pCmdChar;
+    let phChart, isLogging = false;
+    let phHistory = [];
+    let lastPh = 7.0;
+    let startTime;
 
     async function connectBLE() {
-        if (!navigator.bluetooth) return alert("Web Bluetooth not supported here.");
         try {
-            const device = await navigator.bluetooth.requestDevice({ 
-                filters: [{ name: 'NanoPhys_S3' }], 
-                optionalServices: ["19b10000-e8f2-537e-4f6c-d104768a1214"] 
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ name: 'NanoPhys_S3' }],
+                optionalServices: ["19b10000-e8f2-537e-4f6c-d104768a1214"]
             });
             const server = await device.gatt.connect();
             const service = await server.getPrimaryService("19b10000-e8f2-537e-4f6c-d104768a1214");
-            const dataC = await service.getCharacteristic("19b10001-e8f2-537e-4f6c-d104768a1214");
-            commandChar = await service.getCharacteristic("19b10002-e8f2-537e-4f6c-d104768a1214");
+            
+            pDataChar = await service.getCharacteristic("19b10001-e8f2-537e-4f6c-d104768a1214");
+            pCmdChar = await service.getCharacteristic("19b10002-e8f2-537e-4f6c-d104768a1214");
+
+            // Tell Arduino to enter pH Mode immediately
+            await sendCmd("MODE:PH");
+
+            await pDataChar.startNotifications();
+            pDataChar.addEventListener('characteristicvaluechanged', handlePHData);
+
             document.getElementById('bleBtn').innerText = "CONNECTED";
-            
-            // Force pH Mode on connection
-            await commandChar.writeValue(new TextEncoder().encode("MODE:PH"));
-            
-            await dataC.startNotifications();
-            dataC.addEventListener('characteristicvaluechanged', (e) => {
-                const str = new TextDecoder().decode(e.target.value);
-                if (str.startsWith("PH:")) {
-                    document.getElementById('phDisplay').innerText = str.substring(3);
-                } else if (str.startsWith("RAW:")) {
-                    let val = str.substring(4);
-                    calPoints[window.lastCalNum].raw = parseFloat(val);
-                    document.getElementById('raw' + window.lastCalNum).innerText = val;
-                }
-            });
-        } catch (err) { console.log(err); }
+            document.getElementById('bleBtn').style.background = "#2ea44f";
+            document.getElementById('bleBtn').style.color = "#fff";
+            initChart();
+        } catch (e) { alert("BLE Error: " + e); }
     }
 
-    async function captureCal(n) { 
-        window.lastCalNum = n; 
-        calPoints[n].ph = parseFloat(document.getElementById('cal'+n+'Ph').value);
-        if(commandChar) await commandChar.writeValue(new TextEncoder().encode("GET_RAW")); 
+    function handlePHData(event) {
+        const str = new TextDecoder().decode(event.target.value);
+        if (str.startsWith("PH:")) {
+            const val = parseFloat(str.substring(3));
+            updateUI(val);
+        }
     }
-    
-    async function calculateCalibration() {
-        let p1 = calPoints[1], p2 = calPoints[2];
-        if (!p1.raw || !p2.raw) return alert("Need 2 samples to calibrate!");
-        let v1 = p1.raw * (3.3/4095), v2 = p2.raw * (3.3/4095);
-        let slope = Math.abs((p1.ph - p2.ph) / (v1 - v2));
-        let offset = p1.raw + ((p1.ph - 7.0) / ((3.3/4095) * slope));
-        await commandChar.writeValue(new TextEncoder().encode("OFF:" + offset.toFixed(1)));
-        await commandChar.writeValue(new TextEncoder().encode("SLP:" + slope.toFixed(2)));
-        alert("Calibrated! Sent to device.");
+
+    function updateUI(val) {
+        document.getElementById('phVal').innerText = val.toFixed(2);
+        
+        // Stability Logic: If pH hasn't moved more than 0.02 in a reading
+        const drift = Math.abs(val - lastPh);
+        const indicator = document.getElementById('stabInd');
+        const stabText = document.getElementById('stabText');
+        
+        if (drift < 0.02) {
+            indicator.className = "indicator stable";
+            stabText.innerText = "STABLE";
+            stabText.style.color = "#00ff00";
+        } else {
+            indicator.className = "indicator";
+            stabText.innerText = "DRIFTING...";
+            stabText.style.color = "#8b949e";
+        }
+
+        if (isLogging) {
+            const elapsed = (Date.now() - startTime) / 1000;
+            phHistory.push({ x: elapsed, y: val });
+            if (phHistory.length > 100) phHistory.shift();
+            updateChart();
+        }
+        lastPh = val;
+    }
+
+    async function sendCmd(c) {
+        if (!pCmdChar) return;
+        await pCmdChar.writeValue(new TextEncoder().encode(c));
+    }
+
+    function toggleLogging() {
+        isLogging = !isLogging;
+        const btn = document.getElementById('logBtn');
+        if (isLogging) {
+            startTime = Date.now();
+            phHistory = [];
+            btn.innerText = "STOP GRAPH";
+            btn.style.borderColor = "#ff3860";
+        } else {
+            btn.innerText = "RESUME GRAPH";
+            btn.style.borderColor = "#30363d";
+        }
+    }
+
+    function initChart() {
+        const ctx = document.getElementById('phChart').getContext('2d');
+        phChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets: [{
+                label: 'Live pH',
+                data: phHistory,
+                borderColor: '#ffdd57',
+                borderWidth: 3,
+                tension: 0.4,
+                pointRadius: 0
+            }]},
+            options: {
+                responsive: true,
+                scales: {
+                    x: { type: 'linear', title: { display: true, text: 'Time (s)', color: '#8b949e' }, grid: { color: '#30363d' } },
+                    y: { min: 0, max: 14, title: { display: true, text: 'pH Level', color: '#8b949e' }, grid: { color: '#30363d' } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    function updateChart() {
+        phChart.update('none'); 
     }
 </script>
+
 </body>
 </html>
