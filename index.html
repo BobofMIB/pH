@@ -5,25 +5,33 @@
     <title>pH Pro: Lab Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        :root { --bg: #0d1117; --card: #161b22; --accent: #00d1b2; --text: #c9d1d9; --ph7: #4cd137; --ph4: #e84118; --danger: #f85149; }
+        :root { --bg: #0d1117; --card: #161b22; --accent: #00d1b2; --text: #c9d1d9; --ph7: #4cd137; --ph4: #e84118; }
         body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 20px; display: flex; flex-direction: column; align-items: center; }
         .container { width: 100%; max-width: 500px; }
-        .card { background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 15px; }
+        
+        .card { background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        
+        /* The "Hidden" class is now applied by default in the HTML below */
         .hidden { display: none !important; }
+
         .view-controls { display: flex; justify-content: space-around; background: #000; padding: 12px; border-radius: 8px; border: 1px solid #333; margin-bottom: 15px; }
         .view-controls label { font-size: 0.8em; color: #8b949e; cursor: pointer; display: flex; align-items: center; gap: 8px; }
         input[type="checkbox"] { accent-color: var(--accent); scale: 1.2; }
+
         .ph-display { font-size: 6em; text-align: center; font-weight: 800; margin: 10px 0; color: #ffdd57; font-family: monospace; line-height: 1; }
+        
         .diag-box { background: #000; padding: 10px; border-radius: 8px; border: 1px solid #444; text-align: center; margin-bottom: 15px; }
         .raw-num { color: var(--accent); font-weight: bold; font-family: monospace; font-size: 1.3em; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+        .submit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .btn { width: 100%; padding: 16px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
         .btn-ble { background: var(--accent); color: #000; margin-bottom: 15px; font-size: 1em; }
+        
         .btn-sub { background: #21262d; color: #fff; border: 1px solid #444; }
         .btn-sub.ph7 { border-bottom: 4px solid var(--ph7); }
         .btn-sub.ph4 { border-bottom: 4px solid var(--ph4); }
-        .btn-reset { background: transparent; color: var(--danger); border: 1px solid var(--danger); margin-top: 10px; padding: 10px; font-size: 0.75em; width: 100%; }
-        .btn-success { background: #2ea44f !important; color: white !important; }
+        .btn-sub.success { background: #2ea44f !important; border-color: #fff !important; }
+        
         .label { font-size: 0.7em; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
     </style>
 </head>
@@ -43,33 +51,37 @@
     </div>
 
     <div id="calSection" class="card hidden">
-        <div class="label">Calibration</div>
+        <div class="label">Calibration Diagnostics</div>
         <div class="diag-box">
             <span style="color: #8b949e; font-size: 0.8em;">LIVE RAW ADC: </span>
             <span id="rawDisplay" class="raw-num">----</span>
         </div>
-        <div class="grid">
+        <div class="submit-grid">
             <button id="btn7" class="btn btn-sub ph7" onclick="doSubmit('CAL:7', 'btn7')">SUBMIT pH 7</button>
             <button id="btn4" class="btn btn-sub ph4" onclick="doSubmit('CAL:4', 'btn4')">SUBMIT pH 4</button>
         </div>
-        <button id="resetCal" class="btn btn-reset" onclick="doSubmit('CAL:RESET', 'resetCal')">RESET CALIBRATION</button>
     </div>
 
     <div id="graphSection" class="card hidden">
-        <div class="label">pH Trend</div>
+        <div class="label">pH Trend (Time vs pH)</div>
         <canvas id="phChart" style="margin-top:10px;"></canvas>
-        <button class="btn btn-reset" onclick="resetGraph()">CLEAR GRAPH</button>
     </div>
 </div>
 
 <script>
-    let pDataChar, pCmdChar, phChart, startTime = null;
+    let pDataChar, pCmdChar, phChart;
     let phHistory = [];
+    let startTime = null;
 
+    // Updates visibility based on checkbox state
     function updateVisibility() {
         document.getElementById('calSection').classList.toggle('hidden', !document.getElementById('toggleCal').checked);
         document.getElementById('graphSection').classList.toggle('hidden', !document.getElementById('toggleGraph').checked);
-        if (phChart) phChart.resize();
+        
+        // Ensure chart resizes correctly when shown
+        if (phChart && document.getElementById('toggleGraph').checked) {
+            phChart.resize();
+        }
     }
 
     async function connectBLE() {
@@ -85,28 +97,32 @@
 
             await pDataChar.startNotifications();
             pDataChar.addEventListener('characteristicvaluechanged', (e) => {
-                // REPAIRED DATA PARSING
-                let decoder = new TextDecoder();
-                let str = decoder.decode(e.target.value).replace(/\s+/g, ''); // Remove all spaces/newlines
+                const rawString = new TextDecoder().decode(e.target.value);
+                const parts = rawString.trim().split(':');
                 
-                if (str.includes("PH:")) {
-                    let val = parseFloat(str.split("PH:")[1]);
-                    if (!isNaN(val)) {
-                        document.getElementById('phVal').innerText = val.toFixed(2);
-                        updateGraph(val);
+                if (parts.length < 2) return;
+
+                const header = parts[0];
+                const value = parts[1];
+
+                if (header === "PH") {
+                    const numericValue = parseFloat(value);
+                    if (!isNaN(numericValue)) {
+                        document.getElementById('phVal').innerText = numericValue.toFixed(2);
+                        updateGraph(numericValue);
                     }
-                } 
-                if (str.includes("RAW:")) {
-                    let raw = str.split("RAW:")[1];
-                    document.getElementById('rawDisplay').innerText = raw;
+                } else if (header === "RAW") {
+                    document.getElementById('rawDisplay').innerText = value;
                 }
             });
 
-            document.getElementById('bleBtn').innerText = "ONLINE";
-            document.getElementById('bleBtn').classList.add('btn-success');
+            document.getElementById('bleBtn').innerText = "SYSTEM ONLINE";
+            document.getElementById('bleBtn').style.background = "#2ea44f";
+            document.getElementById('bleBtn').style.color = "#fff";
+            
             initGraph();
             startTime = Date.now();
-        } catch (err) { console.log(err); }
+        } catch (err) { console.error("BLE Error:", err); }
     }
 
     async function doSubmit(cmd, btnId) {
@@ -115,32 +131,37 @@
         try {
             await pCmdChar.writeValue(new TextEncoder().encode(cmd));
             const oldText = btn.innerText;
-            btn.innerText = "SENT ✓";
-            setTimeout(() => { btn.innerText = oldText; }, 1200);
-        } catch (e) { console.log(e); }
-    }
-
-    function resetGraph() {
-        phHistory = [];
-        startTime = Date.now();
-        if (phChart) {
-            phChart.data.datasets[0].data = phHistory;
-            phChart.update();
-        }
+            btn.innerText = "SUBMITTED ✓";
+            btn.classList.add('success');
+            setTimeout(() => {
+                btn.innerText = oldText;
+                btn.classList.remove('success');
+            }, 1500);
+        } catch (e) { btn.innerText = "RETRY"; }
     }
 
     function initGraph() {
         const ctx = document.getElementById('phChart').getContext('2d');
         phChart = new Chart(ctx, {
             type: 'line',
-            data: { datasets: [{ label: 'pH', data: phHistory, borderColor: '#ffdd57', tension: 0.3, pointRadius: 2 }]},
+            data: { datasets: [{ label: 'pH Value', data: phHistory, borderColor: '#ffdd57', tension: 0.3, pointRadius: 2, borderWidth: 2 }]},
             options: {
+                responsive: true,
                 scales: {
-                    x: { type: 'linear', title: { display: true, text: 'Seconds' }, grid: { color: '#333' } },
-                    y: { min: 0, max: 14, title: { display: true, text: 'pH' }, grid: { color: '#333' } }
+                    x: { 
+                        type: 'linear', 
+                        title: { display: true, text: 'Time (seconds)', color: '#8b949e' },
+                        grid: { color: '#333' },
+                        ticks: { color: '#8b949e' }
+                    },
+                    y: { 
+                        min: 0, max: 14, 
+                        title: { display: true, text: 'pH', color: '#8b949e' },
+                        grid: { color: '#333' },
+                        ticks: { color: '#8b949e' }
+                    }
                 },
-                plugins: { legend: { display: false } },
-                animation: false
+                plugins: { legend: { display: false } }
             }
         });
     }
